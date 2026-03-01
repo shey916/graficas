@@ -4,258 +4,445 @@ namespace graficas
 {
     public partial class FormGrafica : Form
     {
-        private Dictionary<string, int> _datos;
-        private SeriesChartType _tipoGrafica;
-        private string _titulo;
-        private string _nombreColumna;
-        private int _totalRegistros;
+        private const int LIMITE_CARACTERES_ETIQUETA = 15;
+        private const int CARACTERES_TRUNCADOS = 12;
+        private const string SUFIJO_TRUNCADO = "...";
+        private const int RADIO_DONA = 40;
+        private const double ANCHO_PUNTO_BARRA = 0.8;
+        private const int TAMANO_MARCADOR = 10;
+        private const int ANCHO_LINEA = 3;
 
-        public FormGrafica(Dictionary<string, int> datos, SeriesChartType tipoGrafica, string titulo, string nombreColumna, int totalRegistros = 0)
+        private readonly Dictionary<string, int> _frecuenciaPorCategoria;
+        private readonly SeriesChartType _tipoGrafica;
+        private readonly string _tituloGrafica;
+        private readonly string _nombreColumna;
+        private readonly int _totalRegistros;
+
+        public FormGrafica(
+            Dictionary<string, int> frecuenciaPorCategoria,
+            SeriesChartType tipoGrafica,
+            string tituloGrafica,
+            string nombreColumna,
+            int totalRegistros = 0)
         {
             InitializeComponent();
-            _datos = datos;
+            
+            _frecuenciaPorCategoria = frecuenciaPorCategoria ?? throw new ArgumentNullException(nameof(frecuenciaPorCategoria));
             _tipoGrafica = tipoGrafica;
-            _titulo = titulo;
-            _nombreColumna = nombreColumna;
+            _tituloGrafica = tituloGrafica ?? throw new ArgumentNullException(nameof(tituloGrafica));
+            _nombreColumna = nombreColumna ?? throw new ArgumentNullException(nameof(nombreColumna));
             _totalRegistros = totalRegistros;
+            
             ConfigurarGrafica();
         }
 
         private void ConfigurarGrafica()
         {
-            // Configurar el Chart
+            LimpiarGrafica();
+            ConfigurarTitulos();
+            
+            ChartArea area = CrearAreaGrafico();
+            Series serie = CrearSerie();
+            
+            var datosOrdenados = OrdenarDatosPorFrecuencia();
+            ConfigurarSerieSegunTipo(serie, datosOrdenados, area);
+            
+            chartGrafica.Series.Add(serie);
+            ConfigurarLeyenda();
+            AplicarPaletaColores(serie);
+        }
+
+        private void LimpiarGrafica()
+        {
             chartGrafica.Titles.Clear();
-            chartGrafica.Titles.Add(_titulo);
-            chartGrafica.Titles[0].Font = new Font("Segoe UI", 14, FontStyle.Bold);
-
-            // Agregar subtítulo con información
-            if (_totalRegistros > 0)
-            {
-                int registrosMostrados = _datos.Values.Sum();
-                string subtitulo = _datos.Count >= 50 
-                    ? $"Top 50 de {_datos.Count:N0} valores únicos - {registrosMostrados:N0} de {_totalRegistros:N0} registros"
-                    : $"{_datos.Count:N0} valores únicos - {_totalRegistros:N0} registros totales";
-                
-                chartGrafica.Titles.Add(subtitulo);
-                chartGrafica.Titles[1].Font = new Font("Segoe UI", 9);
-                chartGrafica.Titles[1].ForeColor = Color.Gray;
-            }
-
-            // Limpiar series existentes
             chartGrafica.Series.Clear();
             chartGrafica.ChartAreas.Clear();
-
-            // Crear área de gráfico
-            ChartArea area = new ChartArea("ChartArea1");
-            area.BackColor = Color.White;
-            chartGrafica.ChartAreas.Add(area);
-
-            // Crear nueva serie
-            Series serie = new Series("Datos");
-            serie.ChartType = _tipoGrafica;
-
-            // Ordenar datos por frecuencia (descendente)
-            var datosOrdenados = _datos.OrderByDescending(x => x.Value).ToList();
-
-            // Configuraciones específicas por tipo de gráfica
-            if (_tipoGrafica == SeriesChartType.Doughnut)
-            {
-                ConfigurarGraficaDona(serie, datosOrdenados);
-            }
-            else if (_tipoGrafica == SeriesChartType.Column)
-            {
-                ConfigurarGraficaBarras(serie, datosOrdenados, area);
-            }
-            else if (_tipoGrafica == SeriesChartType.Line)
-            {
-                ConfigurarGraficaLineas(serie, datosOrdenados, area);
-            }
-
-            chartGrafica.Series.Add(serie);
-
-            // Configurar leyenda
             chartGrafica.Legends.Clear();
-            Legend leyenda = new Legend("Legend1");
-            leyenda.Enabled = (_tipoGrafica == SeriesChartType.Doughnut);
-            if (_tipoGrafica == SeriesChartType.Doughnut)
-            {
-                leyenda.Docking = Docking.Right;
-                leyenda.Font = new Font("Segoe UI", 8);
-            }
-            chartGrafica.Legends.Add(leyenda);
+        }
 
-            // Colores personalizados
-            AsignarColores(serie);
+        private void ConfigurarTitulos()
+        {
+            AgregarTituloPrincipal();
+            
+            if (HayRegistrosParaMostrar())
+            {
+                AgregarSubtituloEstadisticas();
+            }
+        }
+
+        private void AgregarTituloPrincipal()
+        {
+            Title titulo = new Title(_tituloGrafica)
+            {
+                Font = new Font("Segoe UI", 14, FontStyle.Bold)
+            };
+            chartGrafica.Titles.Add(titulo);
+        }
+
+        private bool HayRegistrosParaMostrar()
+        {
+            return _totalRegistros > 0;
+        }
+
+        private void AgregarSubtituloEstadisticas()
+        {
+            int registrosMostrados = CalcularTotalRegistrosMostrados();
+            string textoSubtitulo = GenerarTextoEstadisticas(registrosMostrados);
+            
+            Title subtitulo = new Title(textoSubtitulo)
+            {
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.Gray
+            };
+            
+            chartGrafica.Titles.Add(subtitulo);
+        }
+
+        private int CalcularTotalRegistrosMostrados()
+        {
+            return _frecuenciaPorCategoria.Values.Sum();
+        }
+
+        private string GenerarTextoEstadisticas(int registrosMostrados)
+        {
+            int valoresUnicos = _frecuenciaPorCategoria.Count;
+            
+            return valoresUnicos >= 50
+                ? $"Top 50 de {valoresUnicos:N0} valores únicos - {registrosMostrados:N0} de {_totalRegistros:N0} registros"
+                : $"{valoresUnicos:N0} valores únicos - {_totalRegistros:N0} registros totales";
+        }
+
+        private ChartArea CrearAreaGrafico()
+        {
+            ChartArea area = new ChartArea("AreaPrincipal")
+            {
+                BackColor = Color.White
+            };
+            chartGrafica.ChartAreas.Add(area);
+            return area;
+        }
+
+        private Series CrearSerie()
+        {
+            return new Series("Datos")
+            {
+                ChartType = _tipoGrafica
+            };
+        }
+
+        private List<KeyValuePair<string, int>> OrdenarDatosPorFrecuencia()
+        {
+            return _frecuenciaPorCategoria
+                .OrderByDescending(par => par.Value)
+                .ToList();
+        }
+
+        private void ConfigurarSerieSegunTipo(Series serie, List<KeyValuePair<string, int>> datosOrdenados, ChartArea area)
+        {
+            switch (_tipoGrafica)
+            {
+                case SeriesChartType.Doughnut:
+                    ConfigurarGraficaDona(serie, datosOrdenados);
+                    break;
+                    
+                case SeriesChartType.Column:
+                    ConfigurarGraficaBarras(serie, datosOrdenados, area);
+                    break;
+                    
+                case SeriesChartType.Line:
+                    ConfigurarGraficaLineas(serie, datosOrdenados, area);
+                    break;
+            }
         }
 
         private void ConfigurarGraficaDona(Series serie, List<KeyValuePair<string, int>> datosOrdenados)
         {
-            foreach (var item in datosOrdenados)
+            int totalFrecuencias = CalcularTotalRegistrosMostrados();
+            
+            foreach (var categoria in datosOrdenados)
             {
-                DataPoint punto = new DataPoint();
-                punto.YValues = new double[] { item.Value };
-                
-                double porcentaje = (item.Value * 100.0) / _datos.Values.Sum();
-                punto.Label = $"{porcentaje:F1}%";
-                punto.LegendText = $"{item.Key} ({item.Value:N0})";
-                punto.ToolTip = $"{item.Key}\nFrecuencia: {item.Value:N0}\nPorcentaje: {porcentaje:F2}%";
-
+                DataPoint punto = CrearPuntoGraficaDona(categoria, totalFrecuencias);
                 serie.Points.Add(punto);
             }
 
+            AplicarEstiloGraficaDona(serie);
+        }
+
+        private DataPoint CrearPuntoGraficaDona(KeyValuePair<string, int> categoria, int totalFrecuencias)
+        {
+            double porcentaje = CalcularPorcentaje(categoria.Value, totalFrecuencias);
+            
+            return new DataPoint
+            {
+                YValues = new double[] { categoria.Value },
+                Label = $"{porcentaje:F1}%",
+                LegendText = $"{categoria.Key} ({categoria.Value:N0})",
+                ToolTip = GenerarTooltipDona(categoria.Key, categoria.Value, porcentaje)
+            };
+        }
+
+        private double CalcularPorcentaje(int valor, int total)
+        {
+            return (valor * 100.0) / total;
+        }
+
+        private string GenerarTooltipDona(string categoria, int frecuencia, double porcentaje)
+        {
+            return $"{categoria}\nFrecuencia: {frecuencia:N0}\nPorcentaje: {porcentaje:F2}%";
+        }
+
+        private void AplicarEstiloGraficaDona(Series serie)
+        {
             serie["PieLabelStyle"] = "Outside";
-            serie["DoughnutRadius"] = "40";
+            serie["DoughnutRadius"] = RADIO_DONA.ToString();
             serie.IsValueShownAsLabel = true;
             serie.Font = new Font("Segoe UI", 9);
         }
 
         private void ConfigurarGraficaBarras(Series serie, List<KeyValuePair<string, int>> datosOrdenados, ChartArea area)
         {
-            // Configurar serie
+            AplicarEstiloSerieBarras(serie);
+            AgregarPuntosBarras(serie, datosOrdenados);
+            ConfigurarEjes(area, esModoLinea: false);
+        }
+
+        private void AplicarEstiloSerieBarras(Series serie)
+        {
             serie.IsValueShownAsLabel = true;
             serie.Font = new Font("Segoe UI", 8, FontStyle.Bold);
-            serie["PointWidth"] = "0.8";
+            serie["PointWidth"] = ANCHO_PUNTO_BARRA.ToString();
+        }
 
-            // Agregar puntos individuales
-            for (int i = 0; i < datosOrdenados.Count; i++)
+        private void AgregarPuntosBarras(Series serie, List<KeyValuePair<string, int>> datosOrdenados)
+        {
+            for (int indice = 0; indice < datosOrdenados.Count; indice++)
             {
-                var item = datosOrdenados[i];
-                DataPoint punto = new DataPoint();
-                punto.SetValueXY(i, item.Value);
-                punto.AxisLabel = item.Key.Length > 15 ? item.Key.Substring(0, 12) + "..." : item.Key;
-                punto.Label = item.Value.ToString("N0");
-                punto.ToolTip = $"{item.Key}\nFrecuencia: {item.Value:N0}";
-                
+                var categoria = datosOrdenados[indice];
+                DataPoint punto = CrearPuntoGraficaBarrasOLineas(categoria, indice);
                 serie.Points.Add(punto);
             }
-
-            // Configurar área del gráfico
-            area.AxisX.Title = _nombreColumna;
-            area.AxisX.TitleFont = new Font("Segoe UI", 10, FontStyle.Bold);
-            area.AxisY.Title = "Frecuencia";
-            area.AxisY.TitleFont = new Font("Segoe UI", 10, FontStyle.Bold);
-            
-            // Configurar eje X
-            area.AxisX.Interval = 1;
-            area.AxisX.IntervalType = DateTimeIntervalType.Number;
-            area.AxisX.LabelStyle.Angle = -45;
-            area.AxisX.LabelStyle.Font = new Font("Segoe UI", 8);
-            area.AxisX.MajorGrid.Enabled = false;
-            area.AxisX.IsLabelAutoFit = true;
-            
-            // Configurar eje Y
-            area.AxisY.LabelStyle.Format = "N0";
-            area.AxisY.LabelStyle.Font = new Font("Segoe UI", 8);
-            area.AxisY.MajorGrid.LineColor = Color.LightGray;
-            area.AxisY.MajorGrid.LineDashStyle = ChartDashStyle.Dot;
         }
 
         private void ConfigurarGraficaLineas(Series serie, List<KeyValuePair<string, int>> datosOrdenados, ChartArea area)
         {
-            // Configurar serie
+            AplicarEstiloSerieLineas(serie);
+            AgregarPuntosLineas(serie, datosOrdenados);
+            ConfigurarEjes(area, esModoLinea: true);
+        }
+
+        private void AplicarEstiloSerieLineas(Series serie)
+        {
             serie.IsValueShownAsLabel = true;
             serie.Font = new Font("Segoe UI", 8, FontStyle.Bold);
             serie.MarkerStyle = MarkerStyle.Circle;
-            serie.MarkerSize = 10;
-            serie.BorderWidth = 3;
+            serie.MarkerSize = TAMANO_MARCADOR;
+            serie.BorderWidth = ANCHO_LINEA;
+        }
 
-            // Agregar puntos individuales
-            for (int i = 0; i < datosOrdenados.Count; i++)
+        private void AgregarPuntosLineas(Series serie, List<KeyValuePair<string, int>> datosOrdenados)
+        {
+            for (int indice = 0; indice < datosOrdenados.Count; indice++)
             {
-                var item = datosOrdenados[i];
-                DataPoint punto = new DataPoint();
-                punto.SetValueXY(i, item.Value);
-                punto.AxisLabel = item.Key.Length > 15 ? item.Key.Substring(0, 12) + "..." : item.Key;
-                punto.Label = item.Value.ToString("N0");
-                punto.ToolTip = $"{item.Key}\nFrecuencia: {item.Value:N0}";
-                
+                var categoria = datosOrdenados[indice];
+                DataPoint punto = CrearPuntoGraficaBarrasOLineas(categoria, indice);
                 serie.Points.Add(punto);
             }
+        }
 
-            // Configurar área del gráfico
+        private DataPoint CrearPuntoGraficaBarrasOLineas(KeyValuePair<string, int> categoria, int indice)
+        {
+            return new DataPoint
+            {
+                XValue = indice,
+                YValues = new double[] { categoria.Value },
+                AxisLabel = TruncarTextoSiEsNecesario(categoria.Key),
+                Label = categoria.Value.ToString("N0"),
+                ToolTip = $"{categoria.Key}\nFrecuencia: {categoria.Value:N0}"
+            };
+        }
+
+        private string TruncarTextoSiEsNecesario(string texto)
+        {
+            return texto.Length > LIMITE_CARACTERES_ETIQUETA
+                ? texto.Substring(0, CARACTERES_TRUNCADOS) + SUFIJO_TRUNCADO
+                : texto;
+        }
+
+        private void ConfigurarEjes(ChartArea area, bool esModoLinea)
+        {
+            ConfigurarEjeX(area, esModoLinea);
+            ConfigurarEjeY(area);
+        }
+
+        private void ConfigurarEjeX(ChartArea area, bool esModoLinea)
+        {
             area.AxisX.Title = _nombreColumna;
             area.AxisX.TitleFont = new Font("Segoe UI", 10, FontStyle.Bold);
-            area.AxisY.Title = "Frecuencia";
-            area.AxisY.TitleFont = new Font("Segoe UI", 10, FontStyle.Bold);
-            
-            // Configurar eje X
             area.AxisX.Interval = 1;
             area.AxisX.IntervalType = DateTimeIntervalType.Number;
             area.AxisX.LabelStyle.Angle = -45;
             area.AxisX.LabelStyle.Font = new Font("Segoe UI", 8);
-            area.AxisX.MajorGrid.LineColor = Color.LightGray;
-            area.AxisX.MajorGrid.LineDashStyle = ChartDashStyle.Dot;
             area.AxisX.IsLabelAutoFit = true;
-            
-            // Configurar eje Y
+
+            if (esModoLinea)
+            {
+                area.AxisX.MajorGrid.LineColor = Color.LightGray;
+                area.AxisX.MajorGrid.LineDashStyle = ChartDashStyle.Dot;
+            }
+            else
+            {
+                area.AxisX.MajorGrid.Enabled = false;
+            }
+        }
+
+        private void ConfigurarEjeY(ChartArea area)
+        {
+            area.AxisY.Title = "Frecuencia";
+            area.AxisY.TitleFont = new Font("Segoe UI", 10, FontStyle.Bold);
             area.AxisY.LabelStyle.Format = "N0";
             area.AxisY.LabelStyle.Font = new Font("Segoe UI", 8);
             area.AxisY.MajorGrid.LineColor = Color.LightGray;
             area.AxisY.MajorGrid.LineDashStyle = ChartDashStyle.Dot;
         }
 
-        private void AsignarColores(Series serie)
+        private void ConfigurarLeyenda()
         {
-            Color[] colores = new Color[]
+            Legend leyenda = new Legend("LeyendaPrincipal")
             {
-                Color.FromArgb(52, 152, 219),   // Azul
-                Color.FromArgb(46, 204, 113),   // Verde
-                Color.FromArgb(230, 126, 34),   // Naranja
-                Color.FromArgb(231, 76, 60),    // Rojo
-                Color.FromArgb(155, 89, 182),   // Púrpura
-                Color.FromArgb(241, 196, 15),   // Amarillo
-                Color.FromArgb(26, 188, 156),   // Turquesa
-                Color.FromArgb(149, 165, 166),  // Gris
-                Color.FromArgb(243, 156, 18),   // Naranja oscuro
-                Color.FromArgb(192, 57, 43),    // Rojo oscuro
-                Color.FromArgb(127, 140, 141),  // Gris azulado
-                Color.FromArgb(211, 84, 0),     // Naranja quemado
-                Color.FromArgb(41, 128, 185),   // Azul océano
-                Color.FromArgb(39, 174, 96),    // Verde esmeralda
-                Color.FromArgb(142, 68, 173)    // Púrpura oscuro
+                Enabled = EsGraficaDona()
             };
+
+            if (EsGraficaDona())
+            {
+                leyenda.Docking = Docking.Right;
+                leyenda.Font = new Font("Segoe UI", 8);
+            }
+
+            chartGrafica.Legends.Add(leyenda);
+        }
+
+        private bool EsGraficaDona()
+        {
+            return _tipoGrafica == SeriesChartType.Doughnut;
+        }
+
+        private void AplicarPaletaColores(Series serie)
+        {
+            Color[] paletaColores = ObtenerPaletaColores();
 
             for (int i = 0; i < serie.Points.Count; i++)
             {
-                serie.Points[i].Color = colores[i % colores.Length];
-                
-                // Para gráfica de líneas, usar el mismo color para el marcador
+                Color color = paletaColores[i % paletaColores.Length];
+                serie.Points[i].Color = color;
+
                 if (_tipoGrafica == SeriesChartType.Line)
                 {
-                    serie.Points[i].MarkerColor = colores[i % colores.Length];
-                    serie.Color = colores[0]; // Color de la línea principal
+                    serie.Points[i].MarkerColor = color;
+                    serie.Color = paletaColores[0];
                 }
             }
+        }
+
+        private Color[] ObtenerPaletaColores()
+        {
+            return new[]
+            {
+                Color.FromArgb(52, 152, 219),   // Azul cielo
+                Color.FromArgb(46, 204, 113),   // Verde esmeralda
+                Color.FromArgb(230, 126, 34),   // Naranja calabaza
+                Color.FromArgb(231, 76, 60),    // Rojo alizarina
+                Color.FromArgb(155, 89, 182),   // Amatista
+                Color.FromArgb(241, 196, 15),   // Amarillo sol
+                Color.FromArgb(26, 188, 156),   // Turquesa
+                Color.FromArgb(149, 165, 166),  // Gris concreto
+                Color.FromArgb(243, 156, 18),   // Naranja
+                Color.FromArgb(192, 57, 43),    // Granada
+                Color.FromArgb(127, 140, 141),  // Asbesto
+                Color.FromArgb(211, 84, 0),     // Calabaza oscura
+                Color.FromArgb(41, 128, 185),   // Azul peter river
+                Color.FromArgb(39, 174, 96),    // Nefritis
+                Color.FromArgb(142, 68, 173)    // Wisteria
+            };
         }
 
         private void btnExportar_Click(object sender, EventArgs e)
         {
             try
             {
-                using (SaveFileDialog saveDialog = new SaveFileDialog())
-                {
-                    saveDialog.Filter = "PNG Image|*.png|JPEG Image|*.jpg|BMP Image|*.bmp";
-                    saveDialog.Title = "Guardar gráfica como imagen";
-                    saveDialog.FileName = $"Grafica_{_nombreColumna}_{DateTime.Now:yyyyMMdd_HHmmss}";
-
-                    if (saveDialog.ShowDialog() == DialogResult.OK)
-                    {
-                        chartGrafica.SaveImage(saveDialog.FileName, ChartImageFormat.Png);
-                        MessageBox.Show("Gráfica exportada exitosamente.", 
-                            "Éxito", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    }
-                }
+                ExportarGraficaComoImagen();
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error al exportar la gráfica: {ex.Message}", 
-                    "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MostrarErrorExportacion(ex);
             }
+        }
+
+        private void ExportarGraficaComoImagen()
+        {
+            using (SaveFileDialog dialogoGuardar = CrearDialogoGuardarImagen())
+            {
+                if (UsuarioConfirmoGuardado(dialogoGuardar))
+                {
+                    GuardarImagenYNotificar(dialogoGuardar.FileName);
+                }
+            }
+        }
+
+        private SaveFileDialog CrearDialogoGuardarImagen()
+        {
+            return new SaveFileDialog
+            {
+                Filter = "PNG Image|*.png|JPEG Image|*.jpg|BMP Image|*.bmp",
+                Title = "Guardar gráfica como imagen",
+                FileName = GenerarNombreArchivoExportacion()
+            };
+        }
+
+        private string GenerarNombreArchivoExportacion()
+        {
+            string nombreColumnaLimpio = LimpiarNombreArchivo(_nombreColumna);
+            string marcaTemporal = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            return $"Grafica_{nombreColumnaLimpio}_{marcaTemporal}";
+        }
+
+        private string LimpiarNombreArchivo(string nombre)
+        {
+            char[] caracteresInvalidos = Path.GetInvalidFileNameChars();
+            return new string(nombre.Where(c => !caracteresInvalidos.Contains(c)).ToArray());
+        }
+
+        private bool UsuarioConfirmoGuardado(SaveFileDialog dialogo)
+        {
+            return dialogo.ShowDialog() == DialogResult.OK;
+        }
+
+        private void GuardarImagenYNotificar(string rutaArchivo)
+        {
+            chartGrafica.SaveImage(rutaArchivo, ChartImageFormat.Png);
+            MostrarExitoExportacion();
+        }
+
+        private void MostrarExitoExportacion()
+        {
+            MessageBox.Show(
+                "Gráfica exportada exitosamente.",
+                "Éxito",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+        }
+
+        private void MostrarErrorExportacion(Exception ex)
+        {
+            MessageBox.Show(
+                $"Error al exportar la gráfica: {ex.Message}",
+                "Error",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Error);
         }
 
         private void btnCerrar_Click(object sender, EventArgs e)
         {
-            this.Close();
+            Close();
         }
     }
 }

@@ -7,14 +7,29 @@ namespace graficas
             InitializeComponent();
         }
 
-        public void ActualizarMensaje(string mensaje)
+        public void ActualizarMensaje(string mensajeNuevo)
         {
-            if (InvokeRequired)
+            if (RequiereInvocacion())
             {
-                Invoke(new Action<string>(ActualizarMensaje), mensaje);
+                InvocarActualizacionSegura(mensajeNuevo);
                 return;
             }
-            
+
+            AplicarMensaje(mensajeNuevo);
+        }
+
+        private bool RequiereInvocacion()
+        {
+            return InvokeRequired;
+        }
+
+        private void InvocarActualizacionSegura(string mensaje)
+        {
+            Invoke(new Action<string>(ActualizarMensaje), mensaje);
+        }
+
+        private void AplicarMensaje(string mensaje)
+        {
             lblMensaje.Text = mensaje;
             Application.DoEvents();
         }
